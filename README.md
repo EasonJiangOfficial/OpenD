@@ -1,5 +1,5 @@
-<<<<<<< HEAD
-# OpenD
+
+# OpenD Project - Made using Tutorial from Full Stack Dev Course by Angela Yu
 =======
 Copyright 2022 London App Brewery LTD (www.appbrewery.com)
 
