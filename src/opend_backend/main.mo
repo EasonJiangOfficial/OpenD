@@ -4,6 +4,7 @@ import Cycles "mo:base/ExperimentalCycles";
 import Debug "mo:base/Debug";
 import HashMap "mo:base/HashMap";
 import List "mo:base/List";
+import Iter "mo:base/Iter";
 
 actor OpenD {
 
@@ -14,15 +15,16 @@ actor OpenD {
 
     var mapOfNFTs = HashMap.HashMap<Principal,NFTActorClass.NFT>(1,Principal.equal,Principal.hash);
     var mapOfOwners = HashMap.HashMap<Principal,List.List<Principal>>(1,Principal.equal,Principal.hash);
-    var listings = HashMap.HashMap<Principal,Listing>(1,Principal.equal,Principal.hash);
+    var mapOfListings = HashMap.HashMap<Principal,Listing>(1,Principal.equal,Principal.hash);
 
-    public shared(msg) func mint(imgData:[Nat8],name:Text) : async Principal{
-        Debug.print(debug_show(Cycles.balance()));
-        Cycles.add(100_500_000_000);
+    public shared(msg) func mint(imgData:[Nat8], name:Text) : async Principal{
         let owner : Principal = msg.caller;
-        let newNFT = await NFTActorClass.NFT(name,owner,imgData); 
+        
+        Debug.print(debug_show(Cycles.balance())); 
+        Cycles.add(100_500_000_000);
+        let newNFT = await NFTActorClass.NFT(name, owner, imgData); 
         Debug.print(debug_show(Cycles.balance()));
-        let newNFTPrincipal = await newNFT.getCansiterId();
+        let newNFTPrincipal = await newNFT.getCanisterId();
         
         mapOfNFTs.put(newNFTPrincipal, newNFT);
         addToOwnershipMap(owner,newNFTPrincipal);
@@ -47,7 +49,11 @@ actor OpenD {
         };
         
         return List.toArray(userNFTs);
+    };
 
+    public query func getListedNFTs() : async [Principal] {
+        let ids = Iter.toArray(mapOfListings.keys());
+        return ids;
     };
 
     public shared(msg) func listItem(id:Principal,price:Nat) : async Text{
@@ -62,8 +68,8 @@ actor OpenD {
                 itemOwner = owner;
                 itemPrice = price;
             };
-            listings.put(id,newlisting);
-            return "listing success"
+            mapOfListings.put(id,newlisting);
+            return "Success"
         } else{
             return "You dont own this NFT"
         }
@@ -71,16 +77,60 @@ actor OpenD {
     };
 
     public query func getOpenDCanisterID(): async Principal{
-        let actorPrincipal = Principal.fromActor(OpenD);
-        return actorPrincipal;
+        return Principal.fromActor(OpenD);
     };
 
-    public query func isListed(id:Principal) : async Bool {
-        if(listings.get(id) == null){
-            return false;
+    public query func isListed(id: Principal) : async Bool {
+      if (mapOfListings.get(id) == null) {
+        return false;
+      } else{
+        return true;
+      }
+    };
+
+    public query func getOriginalOwner(id: Principal) : async Principal{
+        var listing : Listing = switch(mapOfListings.get(id)) {
+            case null return Principal.fromText("");
+            case (?result) result;
+        };
+        return listing.itemOwner;
+    };
+
+
+    public query func getListedNFTPrice(id: Principal) : async Nat {
+        var listing : Listing = switch(mapOfListings.get(id)) {
+            case null return 0;
+            case (?result) result;
+        };
+        return listing.itemPrice;
+    };
+
+    public shared(msg) func completePurchase(id:Principal, ownerId:Principal, newOwnerId:Principal) : async Text{
+        var purchasedNFT : NFTActorClass.NFT = switch(mapOfNFTs.get(id)){
+            case null return "NFT does not exist";
+            case (?result) result;
+        };
+
+        let transferResult = await purchasedNFT.transferOwnership(newOwnerId);
+
+        if(transferResult == "Success"){
+            mapOfListings.delete(id);
+            var ownedNFTs : List.List<Principal> = switch(mapOfOwners.get(ownerId)){
+                case null List.nil<Principal>();
+                case (?result) result;
+            };
+            
+            ownedNFTs := List.filter(ownedNFTs, func(listItemID:Principal): Bool {
+                return listItemID != id;
+            });
+        
+        
+        addToOwnershipMap(newOwnerId,id);
+        return "Success";
         } else{
-            return true;
-        }
-    }
+            return transferResult;
+        };
+
+    };
 };
 

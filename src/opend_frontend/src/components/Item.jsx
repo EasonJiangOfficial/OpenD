@@ -4,25 +4,29 @@ import { Actor, HttpAgent } from "@dfinity/agent";
 import { idlFactory } from "../../../declarations/nft";
 import { Principal } from "@dfinity/principal";
 import Button from "./Button";
-import { opend_backend } from "../../../declarations/opend_backend/index";
-import { nft } from "../../../declarations/nft/index";
+import { opend_backend } from "../../../declarations/opend_backend";
+import CURRENT_USER_ID from "../index";
+import PriceLabel from "./PriceLabel";
+import { idlFactory as tokenIdlFactory } from "../../../declarations/token_backend";
 
 function Item(props) {
-  const [nftName, setName] = useState("");
-  const [nftId, setId] = useState("");
-  const [nftimg, setImg] = useState("");
-  const [button, setButton] = useState("");
-  const [priceInput, setPrice] = useState("");
-  const [isHiddenLoader, setHidden] = useState(true);
+  const [name, setName] = useState();
+  const [owner, setOwner] = useState();
+  const [image, setImage] = useState();
+  const [button, setButton] = useState();
+  const [priceInput, setPriceInput] = useState();
+  const [loaderHidden, setLoaderHidden] = useState(true);
   const [blur, setBlur] = useState();
-  const [listed, setListed] = useState("");
+  const [sellStatus, setSellStatus] = useState("");
+  const [priceLabel, setPriceLabel] = useState("");
+  const [itemDisplayed, setItemDisplayed] = useState(true);
 
   const id = props.id;
   const localhost = "http://localhost:8080";
 
   const agent = new HttpAgent({ host: localhost });
-  let NFTActor;
   agent.fetchRootKey();
+  let NFTActor;
 
   async function loadNFT() {
     NFTActor = await Actor.createActor(idlFactory, {
@@ -31,33 +35,70 @@ function Item(props) {
     });
 
     const name = await NFTActor.getName();
-    setName(name);
-
     const owner = await NFTActor.getOwner();
-    setId(owner.toText());
-
-    const image = await NFTActor.getAsset();
-    const imageContent = new Uint8Array(image);
-    const imageUrl = URL.createObjectURL(
+    const imageData = await NFTActor.getAsset();
+    const imageContent = new Uint8Array(imageData);
+    const image = URL.createObjectURL(
       new Blob([imageContent.buffer], { type: "image/png" })
     );
-    setImg(imageUrl);
-    const nftIsListed = await opend_backend.isListed(id);
-    console.log(nftIsListed);
 
-    if (nftIsListed){
-      setId("OpenD")
-      setBlur({filter:"blur(4px)"});
-      setListed("listed");
-    } else{
-      setButton(<Button title="Sell" handleClick={handleSell} />);
+    setName(name);
+    setOwner(owner.toText());
+    setImage(image);
+
+    if (props.role === "collection") {
+      const nftIsListed = await opend_backend.isListed(props.id);
+      if (nftIsListed) {
+        setOwner("OpenD");
+        setBlur({ filter: "blur(4px)" });
+        setSellStatus("Listed");
+      } else {
+        setButton(<Button handleClick={handleSell} title="Sell" />);
+      }
+    } else if (props.role == "discover") {
+      var originalOwner = await opend_backend.getOriginalOwner(props.id);
+
+      if (originalOwner.toText() != CURRENT_USER_ID.toText()) {
+        setButton(<Button handleClick={handleBuy} title="buy" />);
+      } else {
+        setButton();
+      }
+      const sellprice = await opend_backend.getListedNFTPrice(props.id);
+      console.log(sellprice);
+      setPriceLabel(<PriceLabel price={sellprice.toString()} />);
+
+      async function handleBuy() {
+        setLoaderHidden(false);
+        const tokenActor = await Actor.createActor(tokenIdlFactory, {
+          agent,
+          canisterId: Principal.fromText("gc5gl-leaaa-aaaaa-qaara-cai"),
+        });
+
+        const sellerId = await opend_backend.getOriginalOwner(props.id);
+        const itemPrice = await opend_backend.getListedNFTPrice(props.id);
+        const result = await tokenActor.transfer(sellerId,itemPrice);
+
+        if (result == "Success"){
+          const transferResult = await opend_backend.completePurchase(props.id,sellerId,CURRENT_USER_ID);
+          console.log("purchase" + transferResult);
+        }
+        
+          setLoaderHidden(true);
+          setItemDisplayed(false)
+      }
+
+
+
     }
-    
   }
+  useEffect(() => {
+    loadNFT();
+  }, []);
 
   let price;
   function handleSell() {
-    setPrice(
+    console.log("Sell clicked");
+    setPriceInput(
       <input
         placeholder="Price in DANG"
         type="number"
@@ -69,56 +110,52 @@ function Item(props) {
       />
     );
 
-    setButton(<Button title="Confirm" handleClick={sellItem} />);
-    
+    setButton(<Button handleClick={sellItem} title="Confirm" />);
   }
-  useEffect(() => {
-    loadNFT();
-  }, []);
 
   async function sellItem() {
-    setBlur({filter:"blur(4px)"})
-    setHidden(false);
-    const listingResult = await opend_backend.listItem(id, Number(price));
-    console.log(listingResult);
-    if (listingResult == "listing Success") {
-      const openDID = await opend_backend.getOpenDCanisterID();
-      const transferResult = await NFTActor.transferOwnership(openDID);
-      console.log(transferResult);
+    setBlur({ filter: "blur(4px)" });
 
-      if(transferResult == "transfer success"){
-        setHidden(true);    
+    setLoaderHidden(false);
+    console.log("set price = " + price);
+    const listingResult = await opend_backend.listItem(props.id, Number(price));
+    console.log("listing: " + listingResult);
+    if (listingResult == "Success") {
+      const openDId = await opend_backend.getOpenDCanisterID();
+      const transferResult = await NFTActor.transferOwnership(openDId);
+      console.log("transfer: " + transferResult);
+      if (transferResult == "Success") {
+        setLoaderHidden(true);
         setButton();
-        setPrice();
-        setId("OpenD");
-        setListed("listed");
+        setPriceInput();
+        setOwner("OpenD");
+        setSellStatus("Listed");
       }
-      
     }
-    
   }
 
   return (
-    <div className="disGrid-item">
+    <div style = {{display : itemDisplayed ? "inline" : "none"}} className="disGrid-item">
       <div className="disPaper-root disCard-root makeStyles-root-17 disPaper-elevation1 disPaper-rounded">
         <img
           className="disCardMedia-root makeStyles-image-19 disCardMedia-media disCardMedia-img"
-          src={nftimg}
+          src={image}
           style={blur}
         />
-        <div hidden={isHiddenLoader} className="lds-ellipsis">
+        <div hidden={loaderHidden} className="lds-ellipsis">
           <div></div>
           <div></div>
           <div></div>
           <div></div>
         </div>
         <div className="disCardContent-root">
+          {priceLabel}
           <h2 className="disTypography-root makeStyles-bodyText-24 disTypography-h5 disTypography-gutterBottom">
-            {nftName}
-            <span className="purple-text"> {listed}</span>
+            {name}
+            <span className="purple-text"> {sellStatus}</span>
           </h2>
           <p className="disTypography-root makeStyles-bodyText-24 disTypography-body2 disTypography-colorTextSecondary">
-            Owner: {nftId}
+            Owner: {owner}
           </p>
           {priceInput}
           {button}
